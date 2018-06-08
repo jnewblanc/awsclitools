@@ -35,14 +35,9 @@ args = parser.parse_args()
 hostedZoneDns=str(args.hostedZone).strip()
 shorthostname=str(args.hostname).replace('.'+hostedZoneDns,'').strip()
 fqdn=shorthostname + '.' + hostedZoneDns + '.'
-verbose=args.verbose
-debug=args.debug
-usecolor=args.color
-
-if verbose:
-  print "hostedZoneDns = "+hostedZoneDns
-  print "shorthostname = "+shorthostname
-  print "fqdn = "+fqdn
+global verbose; verbose=args.verbose
+global debug; debug=args.debug
+global usecolor; usecolor=args.color
 
 # Create the route53 client handle
 r53client = boto3.client('route53')
@@ -53,6 +48,8 @@ pp = pprint.PrettyPrinter(indent=4)
 
 ######################
 def get_hosted_zone_id(zonename):
+  if verbose:
+    log ("VERBOSE Retrieving hostedZone for " + zonename)
   zoneId=''
 
   response = r53client.list_hosted_zones()
@@ -61,7 +58,7 @@ def get_hosted_zone_id(zonename):
 
   for z in response['HostedZones']:
       if verbose:
-        print "name = " + z['Name']
+        log("VERBOSE Zonename = " + z['Name'])
       if str(z['Name']).startswith(zonename):
         zoneId=z['Id']
 
@@ -69,6 +66,8 @@ def get_hosted_zone_id(zonename):
 
 ###################
 def getIpFromRecord(dnsname,zoneId):
+  if verbose:
+    log ("VERBOSE Retrieving IP from DNS record " + dnsname + " in zone " + zoneId)
   response = r53client.list_resource_record_sets(
     HostedZoneId=zoneId,
     StartRecordType='A',
@@ -87,6 +86,8 @@ def getIpFromRecord(dnsname,zoneId):
 
 ################
 def deleteRecord(dnsname,recordType,ip,zoneId):
+  if verbose:
+    log ("VERBOSE deleting record " + dnsname)
   response = r53client.change_resource_record_sets(
     HostedZoneId=zoneId,
     ChangeBatch={
@@ -112,6 +113,8 @@ def deleteRecord(dnsname,recordType,ip,zoneId):
 
 #########################
 def get_ec2_instance_data(tagkey, tagvalue):
+  if verbose:
+    log ("VERBOSE Retrieving data for ec2 instance " + tagkey + ' = ' + tagvalue)
   ec2client = boto3.client('ec2')
 
   response = ec2client.describe_instances(
@@ -122,6 +125,8 @@ def get_ec2_instance_data(tagkey, tagvalue):
       }
     ]
   )
+  if debug:
+    pp.pprint(response)
   return response
 
 
@@ -137,11 +142,11 @@ def log(msg):
       ENDC  = '\033[0m'
 
   if usecolor:
-    if msg.find('ERROR'):
+    if msg.count('ERROR'):
       print bcolors.ERR+ts,msg+bcolors.ENDC
-    elif msg.find('WARN'):
+    elif msg.count('WARN'):
       print bcolors.WARN+ts,msg+bcolors.ENDC
-    elif msg.find('SUCCESS'):
+    elif msg.count('SUCCESS'):
       print bcolors.GREEN+ts,msg+bcolors.ENDC
     else:
       print ts,msg
@@ -151,16 +156,27 @@ def log(msg):
 
 #-------------------------
 
+if verbose:
+  log ("VERBOSE hostedZoneDns = "+hostedZoneDns)
+  log ("VERBOSE shorthostname = "+shorthostname)
+  log ("VERBOSE fqdn = "+fqdn)
+
 # Safety Check - Abort if ec2 instance exists
 instanceId=""
+instanceState=""
 instance_data = get_ec2_instance_data("Name",shorthostname)
 for r in instance_data['Reservations']:
   for i in r['Instances']:
     instanceId=i['InstanceId']
-if instanceId != "":
+    if verbose:
+      log("VERBOSE: instanceId = " + instanceId)
+      instanceState=i['State']['Name']
+    if verbose:
+      log("VERBOSE: instanceState = " + instanceState)
+
+if (instanceId != "") and (instanceState != 'terminated'):
   log("WARN: Instance " + shorthostname + " (" + instanceId + ") exists.  Aborting")
   exit(0)
-
 
 hostedzoneId=get_hosted_zone_id(hostedZoneDns).replace('/hostedzone/','')
 if verbose:
