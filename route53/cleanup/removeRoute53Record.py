@@ -23,6 +23,8 @@ parser.add_argument('hostname', metavar='hostname', type=str,
 parser.add_argument('--hostedZone', metavar='hostedzone', type=str,
   default=defaultHostedZoneDns,
   help='The route53 hosted zone, which is the domain name')
+parser.add_argument('--dryrun', action='store_true', default=False,
+  help='Run through all the checks, but dont actually delete anything')
 parser.add_argument('--verbose', action='store_true', default=False,
   help='turn on verbose output')
 parser.add_argument('--debug', action='store_true', default=False,
@@ -35,6 +37,7 @@ args = parser.parse_args()
 hostedZoneDns=str(args.hostedZone).strip()
 shorthostname=str(args.hostname).replace('.'+hostedZoneDns,'').strip()
 fqdn=shorthostname + '.' + hostedZoneDns + '.'
+dryrun=args.dryrun
 global verbose; verbose=args.verbose
 global debug; debug=args.debug
 global usecolor; usecolor=args.color
@@ -46,15 +49,14 @@ r53client = boto3.client('route53')
 pp = pprint.PrettyPrinter(indent=4)
 
 
-######################
+###################### Get hosted zone ID from the hosted zone DNS name
 def get_hosted_zone_id(zonename):
   if verbose:
     log ("VERBOSE Retrieving hostedZone for " + zonename)
   zoneId=''
 
   response = r53client.list_hosted_zones()
-  if debug:
-    pp.pprint(response)
+  debug_dump(response)
 
   for z in response['HostedZones']:
       if verbose:
@@ -64,7 +66,7 @@ def get_hosted_zone_id(zonename):
 
   return zoneId
 
-###################
+################### - Get IP address from route53 record
 def getIpFromRecord(dnsname,zoneId):
   if verbose:
     log ("VERBOSE Retrieving IP from DNS record " + dnsname + " in zone " + zoneId)
@@ -74,17 +76,16 @@ def getIpFromRecord(dnsname,zoneId):
     StartRecordName=dnsname,
     MaxItems='1'
   )
-  if debug:
-    pp.pprint(response)
+  debug_dump(response)
 
   for r in response['ResourceRecordSets']:
     if r['Name'] == dnsname:
       for s in r['ResourceRecords']:
         return s['Value']
     else:
-      return 0
+      return False
 
-################
+################ Delete route53 record
 def deleteRecord(dnsname,recordType,ip,zoneId):
   if verbose:
     log ("VERBOSE deleting record " + dnsname)
@@ -108,10 +109,9 @@ def deleteRecord(dnsname,recordType,ip,zoneId):
       ]
     }
   )
-  if debug:
-    pp.pprint(response)
+  debug_dump(response)
 
-#########################
+######################### Get ec2 instance data based on a tag keypair
 def get_ec2_instance_data(tagkey, tagvalue):
   if verbose:
     log ("VERBOSE Retrieving data for ec2 instance " + tagkey + ' = ' + tagvalue)
@@ -125,12 +125,11 @@ def get_ec2_instance_data(tagkey, tagvalue):
       }
     ]
   )
-  if debug:
-    pp.pprint(response)
+  debug_dump(response)
   return response
 
 
-#######
+####### Log output with timestamp and optional colorization
 def log(msg):
   ts = datetime.datetime.now().strftime("%D %H:%M:%S")
 
@@ -153,6 +152,10 @@ def log(msg):
   else:
     print ts,msg
   
+############## Display object if debug mode is on 
+def debug_dump(obj):
+  if debug:
+    pp.pprint(obj)
 
 #-------------------------
 
@@ -169,26 +172,31 @@ for r in instance_data['Reservations']:
   for i in r['Instances']:
     instanceId=i['InstanceId']
     if verbose:
-      log("VERBOSE: instanceId = " + instanceId)
+      log("VERBOSE instanceId = " + instanceId)
       instanceState=i['State']['Name']
     if verbose:
-      log("VERBOSE: instanceState = " + instanceState)
+      log("VERBOSE instanceState = " + instanceState)
 
 if (instanceId != "") and (instanceState != 'terminated'):
-  log("WARN: Instance " + shorthostname + " (" + instanceId + ") exists.  Aborting")
+  log("WARN Instance " + shorthostname + " (" + instanceId + ") exists.  Aborting")
   exit(0)
 
 hostedzoneId=get_hosted_zone_id(hostedZoneDns).replace('/hostedzone/','')
 if verbose:
-  print "hostedzoneId = " + hostedzoneId
+  log("VERBOSE hostedzoneId = " + hostedzoneId)
 
 ip=getIpFromRecord(fqdn,hostedzoneId)
+if verbose:
+  log("VERBOSE ip = " + str(ip))
 if ip:
-  log("INFO: Deleting DNS Record \"" + fqdn + "\" (" + ip + ")")
-  deleteRecord(fqdn,'A',ip,hostedzoneId)
-  if getIpFromRecord(fqdn,hostedzoneId):
-    log("ERROR: DNS Record \"" + fqdn + "\" still exists")
+  if dryrun:
+    log("DRYRUN Would delete DNS Record \"" + fqdn + "\" (" + ip + ")")
   else:
-    log("SUCCESS: DNS Record \"" + fqdn + "\" has been deleted")
+    log("INFO Deleting DNS Record \"" + fqdn + "\" (" + ip + ")")
+    deleteRecord(fqdn,'A',ip,hostedzoneId)
+    if getIpFromRecord(fqdn,hostedzoneId):
+      log("ERROR DNS Record \"" + fqdn + "\" still exists")
+    else:
+      log("SUCCESS DNS Record \"" + fqdn + "\" has been deleted")
 else:
-  log("WARN: DNS Record \"" + fqdn + "\" doesn't exist in ZoneId " + hostedzoneId)
+  log("WARN DNS Record \"" + fqdn + "\" doesn't exist in ZoneId " + hostedzoneId)
