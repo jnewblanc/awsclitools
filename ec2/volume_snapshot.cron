@@ -1,0 +1,10 @@
+# Volume snapshot (and snapshot management) cron
+#
+# Snapshot volumes tagged with backup=true
+0 20 * * * root (sleeptime=$(($RANDOM \% 180 )) ; timestamp=`/bin/date "+\%Y\%m\%d \%H\%M"` ; echo "${timestamp} Sleeping for ${sleeptime} minutes"; /bin/sleep "${sleeptime}m" ; /opt/mydomain/chefInstalled/bin/volume_snapshot_tool.sh -debug) >> /var/log/mydomain/volumeSnapshot.log 2>&1
+# Roll log ever so often
+0 19 31 * * root date > /var/log/mydomain/volumeSnapshot.log 2>&1
+# Add a daily timestamp to a log on the storage device mounted under /mnt.
+# When restoring from a snapshot, this log helps us identify when the disk
+# was snapshotted.
+0 1 * * * root for one_dir in `/bin/mount | grep /mnt/ | awk '{print $3}'`; do date >> $one_dir/storage_timestamp.log; done
